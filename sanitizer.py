@@ -1,125 +1,150 @@
 import re
 import spacy
+from faker import Faker
 
-# Load spaCy NLP model with cloud fallback
+# Load spaCy NLP model with automated fallback
 try:
     nlp = spacy.load("en_core_web_sm")
-except OSError:
+except Exception:
     import spacy.cli
     spacy.cli.download("en_core_web_sm")
     nlp = spacy.load("en_core_web_sm")
-# Define Regular Expressions for structured data patterns
-EMAIL_REGEX = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-PHONE_REGEX = r'\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b'
-CARD_REGEX = r'\b(?:\d{4}[-\s]?){3}\d{4}\b'
 
+fake = Faker()
 
-def sanitize_text(text: str) -> dict:
-    """
-    Scans input text for sensitive entities (PII) using Regex and spaCy NER.
-    Returns sanitized text, entity counts, total redactions, and a risk level.
-    """
-    audit_log = {
-        "EMAILS": 0,
-        "PHONES": 0,
-        "CARDS": 0,
-        "NAMES": 0,
-        "LOCATIONS": 0,
-        "ORGS": 0
+# Extended High-Precision Regex Patterns
+REGEX_PATTERNS = {
+    "EMAIL": r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b',
+    "PHONE": r'\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b',
+    "CREDIT_CARD": r'\b(?:\d{4}[-\s]?){3}\d{4}\b',
+    "PAN_CARD": r'\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b',
+    "AADHAAR": r'\b[2-9]{1}[0-9]{3}\s?[0-9]{4}\s?[0-9]{4}\b',
+    "SSN": r'\b\d{3}-\d{2}-\d{4}\b',
+    "AWS_KEY": r'\bAKIA[0-9A-Z]{16}\b',
+    "API_KEY": r'\bsk-[a-zA-Z0-9]{32,}\b'
+}
+
+COLOR_MAP = {
+    "PERSON": "#FF4B4B",
+    "EMAIL": "#00C0F2",
+    "PHONE": "#00D4B1",
+    "CREDIT_CARD": "#FF8700",
+    "ORG": "#7D3C98",
+    "GPE": "#2ECC71",
+    "LOC": "#2ECC71",
+    "PAN_CARD": "#E74C3C",
+    "AADHAAR": "#D35400",
+    "SSN": "#C0392B",
+    "AWS_KEY": "#F39C12",
+    "API_KEY": "#F1C40F"
+}
+
+def obfuscate_value(value, entity_type):
+    """Partially masks sensitive data (e.g. j***n@gmail.com)."""
+    if entity_type == "EMAIL" and "@" in value:
+        name, domain = value.split("@", 1)
+        return f"{name[0]}***{name[-1] if len(name)>1 else ''}@{domain}"
+    elif entity_type in ["CREDIT_CARD", "PAN_CARD", "AADHAAR", "SSN"]:
+        return f"****-****-{value[-4:]}"
+    elif len(value) > 3:
+        return f"{value[0]}***{value[-1]}"
+    return "***"
+
+def get_synthetic_value(entity_type):
+    """Generates realistic fake data using Faker."""
+    mapping = {
+        "PERSON": fake.name(),
+        "EMAIL": fake.email(),
+        "PHONE": fake.phone_number(),
+        "CREDIT_CARD": fake.credit_card_number(),
+        "ORG": fake.company(),
+        "GPE": fake.city(),
+        "LOC": fake.city(),
+        "PAN_CARD": "ABCDE1234F",
+        "AADHAAR": "9999 8888 7777",
+        "SSN": "000-12-3456",
+        "AWS_KEY": "AKIAIOSFODNN7EXAMPLE",
+        "API_KEY": "sk-proj-FAKEKEY12345678901234567890"
     }
+    return mapping.get(entity_type, "[REDACTED]")
 
-    # -------------------------------------------------------------
-    # STAGE 1: Regex Pattern Matching (Structured PII)
-    # -------------------------------------------------------------
-    
-    # 1. Redact Emails
-    emails = re.findall(EMAIL_REGEX, text)
-    audit_log["EMAILS"] = len(emails)
-    working_text = re.sub(EMAIL_REGEX, "[REDACTED_EMAIL]", text)
+def analyze_and_sanitize(text, mode="Token Vault (Reversible)"):
+    """
+    Scans text for PII & secrets, redacts them according to selected strategy,
+    and returns detected metadata, sanitized text, and vault mapping.
+    """
+    if not text.strip():
+        return text, [], "LOW", {}, []
 
-    # 2. Redact Phone Numbers
-    phones = re.findall(PHONE_REGEX, working_text)
-    audit_log["PHONES"] = len(phones)
-    working_text = re.sub(PHONE_REGEX, "[REDACTED_PHONE]", working_text)
+    doc = nlp(text)
+    detected_entities = []
+    vault = {}
+    counters = {}
 
-    # 3. Redact Credit Cards
-    cards = re.findall(CARD_REGEX, working_text)
-    audit_log["CARDS"] = len(cards)
-    working_text = re.sub(CARD_REGEX, "[REDACTED_CARD]", working_text)
-
-    # -------------------------------------------------------------
-    # STAGE 2: SpaCy Named Entity Recognition (Unstructured PII)
-    # -------------------------------------------------------------
-    
-    # Process intermediate text through spaCy NLP pipeline
-    doc = nlp(working_text)
-    entities_to_replace = []
-
-    # Extract character offsets for Names, Locations, and Organizations
+    # 1. Detect SpaCy NER Entities
     for ent in doc.ents:
-        if ent.label_ == "PERSON":
-            entities_to_replace.append((ent.start_char, ent.end_char, "[REDACTED_NAME]"))
-            audit_log["NAMES"] += 1
-        elif ent.label_ in ["GPE", "LOC"]:
-            entities_to_replace.append((ent.start_char, ent.end_char, "[REDACTED_LOCATION]"))
-            audit_log["LOCATIONS"] += 1
-        elif ent.label_ == "ORG":
-            entities_to_replace.append((ent.start_char, ent.end_char, "[REDACTED_ORG]"))
-            audit_log["ORGS"] += 1
+        if ent.label_ in ["PERSON", "ORG", "GPE", "LOC"]:
+            detected_entities.append({
+                "start": ent.start_char,
+                "end": ent.end_char,
+                "text": ent.text,
+                "type": ent.label_
+            })
 
-    # Replace entities backwards by start index so earlier text indices remain accurate
-    sanitized_text = working_text
-    for start, end, label in sorted(entities_to_replace, key=lambda x: x[0], reverse=True):
-        sanitized_text = sanitized_text[:start] + label + sanitized_text[end:]
+    # 2. Detect Regex Entities
+    for ent_type, pattern in REGEX_PATTERNS.items():
+        for match in re.finditer(pattern, text):
+            if not any(e["start"] <= match.start() < e["end"] for e in detected_entities):
+                detected_entities.append({
+                    "start": match.start(),
+                    "end": match.end(),
+                    "text": match.group(),
+                    "type": ent_type
+                })
 
-    # -------------------------------------------------------------
-    # STAGE 3: Risk Level Calculation
-    # -------------------------------------------------------------
-    
-    total_redactions = sum(audit_log.values())
+    detected_entities.sort(key=lambda x: x["start"], reverse=True)
 
-    if audit_log["CARDS"] > 0 or audit_log["PHONES"] > 0:
-        risk_level = "HIGH"
-    elif total_redactions > 0:
-        risk_level = "MEDIUM"
+    sanitized_text = text
+
+    for ent in detected_entities:
+        e_type = ent["type"]
+        val = ent["text"]
+        counters[e_type] = counters.get(e_type, 0) + 1
+        idx = counters[e_type]
+
+        if mode == "Token Vault (Reversible)":
+            token = f"{{{{{e_type}_{idx}}}}}"
+            replacement = token
+            vault[token] = val
+        elif mode == "Label Masking":
+            replacement = f"[{e_type}_REDACTED]"
+        elif mode == "Partial Obfuscation":
+            replacement = obfuscate_value(val, e_type)
+        elif mode == "Synthetic Substitution":
+            replacement = get_synthetic_value(e_type)
+        else:
+            replacement = "[REDACTED]"
+
+        sanitized_text = sanitized_text[:ent["start"]] + replacement + sanitized_text[ent["end"]:]
+
+    total_count = len(detected_entities)
+    critical_types = {"CREDIT_CARD", "PAN_CARD", "AADHAAR", "SSN", "AWS_KEY", "API_KEY"}
+    has_critical = any(e["type"] in critical_types for e in detected_entities)
+
+    if total_count == 0:
+        risk = "LOW"
+    elif has_critical or total_count >= 4:
+        risk = "HIGH"
     else:
-        risk_level = "LOW"
+        risk = "MEDIUM"
 
-    return {
-        "sanitized_text": sanitized_text,
-        "audit_log": audit_log,
-        "total_redactions": total_redactions,
-        "risk_level": risk_level
-    }
+    detected_entities.sort(key=lambda x: x["start"])
 
+    return sanitized_text, detected_entities, risk, vault
 
-# Local execution test block
-if __name__ == "__main__":
-    sample_prompt = (
-        "Hello, my name is Bruce Wayne representing Wayne Enterprises located in Gotham City. "
-        "You can reach out to bruce@wayne.com or call 555-839-2001. "
-        "Billing account card number is 4111-2222-3333-4444."
-    )
-
-    print("Executing local test...\n")
-    results = sanitize_text(sample_prompt)
-
-    print("=" * 60)
-    print("ORIGINAL INPUT PROMPT:")
-    print("=" * 60)
-    print(sample_prompt)
-
-    print("\n" + "=" * 60)
-    print("SANITIZED OUTPUT TEXT:")
-    print("=" * 60)
-    print(results["sanitized_text"])
-
-    print("\n" + "=" * 60)
-    print("AUDIT METRICS & RISK EVALUATION:")
-    print("=" * 60)
-    print(f"Total Entities Redacted: {results['total_redactions']}")
-    print(f"Assigned Risk Level:    {results['risk_level']}")
-    print("Entity Breakdown:")
-    for key, val in results["audit_log"].items():
-        print(f"  - {key}: {val}")
-    print("=" * 60)
+def rehydrate_text(sanitized_text, vault):
+    """Replaces tokens back with original values from vault."""
+    restored = sanitized_text
+    for token, original in vault.items():
+        restored = restored.replace(token, original)
+    return restored

@@ -226,7 +226,7 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# 5. Presets
+# 5. Presets & Session State
 PRESETS = {
     "Customer Support Ticket": "Hello, my name is Sarah Jenkins. My phone number is 415-555-2671 and email is s.jenkins@techcorp.io. I was charged on my card 4532-7182-9910-1201.",
     "Financial & Tax Records": "Tax Filing record for Rajesh Kumar (PAN: ABCDE1234F, Aadhaar: 9876 5432 1098). Account manager at HDFC Bank, Mumbai.",
@@ -235,6 +235,8 @@ PRESETS = {
 
 if "user_input" not in st.session_state:
     st.session_state["user_input"] = ""
+if "run_analysis" not in st.session_state:
+    st.session_state["run_analysis"] = False
 
 st.markdown("##### ⚡ Quick Load Scenario Presets")
 
@@ -243,12 +245,14 @@ p_cols = st.columns([1, 1.3, 1.3, 1.3])
 with p_cols[0]:
     if st.button("🧹 Clear Input", use_container_width=True):
         st.session_state["user_input"] = ""
+        st.session_state["run_analysis"] = False
         st.rerun()
 
 for idx, (label, sample_text) in enumerate(PRESETS.items(), start=1):
     with p_cols[idx]:
         if st.button(f"📄 {label}", use_container_width=True):
             st.session_state["user_input"] = sample_text
+            st.session_state["run_analysis"] = True
             st.rerun()
 
 user_text = st.text_area(
@@ -258,8 +262,15 @@ user_text = st.text_area(
     placeholder="Type or paste prompt text containing names, email addresses, phone numbers, API keys, or financial identifiers..."
 )
 
+# Dedicated Run Button
+run_btn = st.button("🛡️ Run Sanitizer Engine", type="primary", use_container_width=True)
+
+if run_btn:
+    st.session_state["user_input"] = user_text
+    st.session_state["run_analysis"] = True
+
 # 6. Real-Time Processing
-if user_text.strip():
+if st.session_state["run_analysis"] and user_text.strip():
     sanitized_text, entities, risk_level, vault = analyze_and_sanitize(user_text, mode=redaction_mode)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -353,9 +364,14 @@ if user_text.strip():
             llm_response = st.text_area("Simulated Raw LLM Response Payload (Containing Vault Tokens):", value=default_llm_response, height=85)
 
             restored_response = rehydrate_text(llm_response, vault)
-            st.markdown("**Client-Side Restored Output (Post De-Anonymization):**")
-            st.success(restored_response)
+            st.markdown('<div class="card-header-title">🔓 DE-ANONYMIZED OUTPUT (RESTORED AT CLIENT PROXY — READY TO COPY)</div>', unsafe_allow_html=True)
+            st.code(restored_response, language="text")
         else:
             st.info("Vault is currently empty. Select 'Token Vault (Reversible)' strategy and input a text payload with PII to generate mapping tokens.")
 else:
-    st.info("👈 Select a scenario preset above or enter text into the ingress payload box to initialize sanitization.")
+    st.markdown("""
+    <div style="text-align:center; padding: 2.5rem 1rem; background:#0D131F; border:1px dashed #1E293B; border-radius:12px; margin-top:1rem;">
+        <div style="font-size:1.1rem; font-weight:600; color:#F8FAFC;">Awaiting Payload Ingress</div>
+        <div style="font-size:0.85rem; color:#64748B; margin-top:6px;">Select a preset scenario above or enter prompt text and click '🛡️ Run Sanitizer Engine' to trigger sanitization.</div>
+    </div>
+    """, unsafe_allow_html=True)

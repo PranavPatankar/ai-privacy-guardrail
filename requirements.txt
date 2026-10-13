@@ -1,5 +1,5 @@
 streamlit>=1.30.0
-spacy>=3.7.0
+spacy>=3.7.2,<3.8.0
 pandas>=2.0.0
 plotly>=5.18.0
 faker>=22.0.0

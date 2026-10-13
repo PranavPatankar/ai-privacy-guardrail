@@ -21,7 +21,11 @@ REGEX_PATTERNS = {
     "AADHAAR": r'\b[2-9]{1}[0-9]{3}\s?[0-9]{4}\s?[0-9]{4}\b',
     "SSN": r'\b\d{3}-\d{2}-\d{4}\b',
     "AWS_KEY": r'\bAKIA[0-9A-Z]{16}\b',
-    "API_KEY": r'\bsk-[a-zA-Z0-9]{32,}\b'
+    "API_KEY": r'\bsk-(?:proj-)?[a-zA-Z0-9_-]{20,}\b',
+    "GITHUB_TOKEN": r'\bgh[pousr]_[A-Za-z0-9]{36,}\b',
+    "SLACK_TOKEN": r'\bxox[baprs]-[A-Za-z0-9-]{10,}\b',
+    "JWT": r'\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b',
+    "GOOGLE_API_KEY": r'\bAIza[0-9A-Za-z_-]{35}\b'
 }
 
 COLOR_MAP = {
@@ -36,8 +40,25 @@ COLOR_MAP = {
     "AADHAAR": "#D35400",
     "SSN": "#C0392B",
     "AWS_KEY": "#F39C12",
-    "API_KEY": "#F1C40F"
+    "API_KEY": "#F1C40F",
+    "GITHUB_TOKEN": "#6E5494",
+    "SLACK_TOKEN": "#ECB22E",
+    "JWT": "#16A085",
+    "GOOGLE_API_KEY": "#4285F4"
 }
+
+def _passes_luhn(digits):
+    """Validates a numeric string against the Luhn checksum to cut credit-card false positives."""
+    total = 0
+    reverse_digits = digits[::-1]
+    for i, d in enumerate(reverse_digits):
+        d = int(d)
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
 
 def obfuscate_value(value, entity_type):
     """Partially masks sensitive data (e.g. j***n@gmail.com)."""
@@ -64,7 +85,11 @@ def get_synthetic_value(entity_type):
         "AADHAAR": "9999 8888 7777",
         "SSN": "000-12-3456",
         "AWS_KEY": "AKIAIOSFODNN7EXAMPLE",
-        "API_KEY": "sk-proj-FAKEKEY12345678901234567890"
+        "API_KEY": "sk-proj-FAKEKEY12345678901234567890",
+        "GITHUB_TOKEN": "ghp_FAKEGITHUBTOKEN1234567890123456",
+        "SLACK_TOKEN": "xoxb-FAKE-SLACK-TOKEN-0000000000",
+        "JWT": "eyJFAKE.eyJQQVlMT0FE.FAKESIGNATURE",
+        "GOOGLE_API_KEY": "AIzaFAKEGOOGLEAPIKEY000000000000000"
     }
     return mapping.get(entity_type, "[REDACTED]")
 
@@ -74,7 +99,7 @@ def analyze_and_sanitize(text, mode="Token Vault (Reversible)"):
     and returns detected metadata, sanitized text, and vault mapping.
     """
     if not text.strip():
-        return text, [], "LOW", {}, []
+        return text, [], "LOW", {}
 
     doc = nlp(text)
     detected_entities = []
@@ -94,6 +119,10 @@ def analyze_and_sanitize(text, mode="Token Vault (Reversible)"):
     # 2. Detect Regex Entities
     for ent_type, pattern in REGEX_PATTERNS.items():
         for match in re.finditer(pattern, text):
+            if ent_type == "CREDIT_CARD":
+                digits = re.sub(r'[-\s]', '', match.group())
+                if not _passes_luhn(digits):
+                    continue
             if not any(e["start"] <= match.start() < e["end"] for e in detected_entities):
                 detected_entities.append({
                     "start": match.start(),
@@ -128,7 +157,10 @@ def analyze_and_sanitize(text, mode="Token Vault (Reversible)"):
         sanitized_text = sanitized_text[:ent["start"]] + replacement + sanitized_text[ent["end"]:]
 
     total_count = len(detected_entities)
-    critical_types = {"CREDIT_CARD", "PAN_CARD", "AADHAAR", "SSN", "AWS_KEY", "API_KEY"}
+    critical_types = {
+        "CREDIT_CARD", "PAN_CARD", "AADHAAR", "SSN", "AWS_KEY", "API_KEY",
+        "GITHUB_TOKEN", "SLACK_TOKEN", "JWT", "GOOGLE_API_KEY"
+    }
     has_critical = any(e["type"] in critical_types for e in detected_entities)
 
     if total_count == 0:

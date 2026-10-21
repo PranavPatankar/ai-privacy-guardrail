@@ -2,15 +2,14 @@ import re
 import spacy
 from faker import Faker
 
-# Load spaCy NLP model safely without runtime pip downloads
+# Load spaCy NLP model safely without runtime downloads
 try:
-    import en_core_web_sm
-    nlp = en_core_web_sm.load()
+    nlp = spacy.load("en_core_web_sm")
 except Exception:
-    try:
-        nlp = spacy.load("en_core_web_sm")
-    except Exception:
-        nlp = spacy.blank("en")
+    nlp = spacy.blank("en")
+
+fake = Faker()
+
 # Extended High-Precision Regex Patterns
 REGEX_PATTERNS = {
     "EMAIL": r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b',
@@ -194,7 +193,7 @@ You are an expert {persona}. Execute the following request under strict enterpri
 
 ### DIRECTIVES & CONSTRAINTS
 1. Tone & Style: Maintain a {tone.lower()} tone in your response.
-2. Token Preservation: DO NOT alter, remove, or replace any placeholder tokens formatted like {{ENTITY_TYPE_N}} (e.g., {{PERSON_1}}, {{EMAIL_1}}, {{CREDIT_CARD_1}}). Retain them exactly as provided in your output response.
+2. Token Preservation: DO NOT alter, remove, or replace any placeholder tokens formatted like {{{{ENTITY_TYPE_N}}}} (e.g., {{{{PERSON_1}}}}, {{{{EMAIL_1}}}}, {{{{CREDIT_CARD_1}}}}). Retain them exactly as provided in your output response.
 3. Factuality & Conciseness: Address the requirements directly without hallucinating additional details or adding unnecessary fluff.
 
 ### INGRESS PAYLOAD (SANITIZED)

@@ -2,13 +2,15 @@ import re
 import spacy
 from faker import Faker
 
-# Load spaCy NLP model with safe fallback
+# Load spaCy NLP model safely without runtime pip downloads
 try:
-    nlp = spacy.load("en_core_web_sm")
+    import en_core_web_sm
+    nlp = en_core_web_sm.load()
 except Exception:
-    nlp = spacy.blank("en")
-fake = Faker()
-
+    try:
+        nlp = spacy.load("en_core_web_sm")
+    except Exception:
+        nlp = spacy.blank("en")
 # Extended High-Precision Regex Patterns
 REGEX_PATTERNS = {
     "EMAIL": r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b',

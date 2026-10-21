@@ -21,7 +21,11 @@ REGEX_PATTERNS = {
     "AADHAAR": r'\b[2-9]{1}[0-9]{3}\s?[0-9]{4}\s?[0-9]{4}\b',
     "SSN": r'\b\d{3}-\d{2}-\d{4}\b',
     "AWS_KEY": r'\bAKIA[0-9A-Z]{16}\b',
-    "API_KEY": r'\bsk-[a-zA-Z0-9]{32,}\b'
+    "API_KEY": r'\bsk-(?:proj-)?[a-zA-Z0-9_-]{20,}\b',
+    "GITHUB_TOKEN": r'\bgh[pousr]_[A-Za-z0-9]{36,}\b',
+    "SLACK_TOKEN": r'\bxox[baprs]-[A-Za-z0-9-]{10,}\b',
+    "JWT": r'\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b',
+    "GOOGLE_API_KEY": r'\bAIza[0-9A-Za-z_-]{35}\b'
 }
 
 COLOR_MAP = {
@@ -36,8 +40,25 @@ COLOR_MAP = {
     "AADHAAR": "#D35400",
     "SSN": "#C0392B",
     "AWS_KEY": "#F39C12",
-    "API_KEY": "#F1C40F"
+    "API_KEY": "#F1C40F",
+    "GITHUB_TOKEN": "#6E5494",
+    "SLACK_TOKEN": "#ECB22E",
+    "JWT": "#16A085",
+    "GOOGLE_API_KEY": "#4285F4"
 }
+
+def _passes_luhn(digits):
+    """Validates a numeric string against the Luhn checksum to cut credit-card false positives."""
+    total = 0
+    reverse_digits = digits[::-1]
+    for i, d in enumerate(reverse_digits):
+        d = int(d)
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
 
 def obfuscate_value(value, entity_type):
     """Partially masks sensitive data (e.g. j***n@gmail.com)."""
@@ -64,7 +85,11 @@ def get_synthetic_value(entity_type):
         "AADHAAR": "9999 8888 7777",
         "SSN": "000-12-3456",
         "AWS_KEY": "AKIAIOSFODNN7EXAMPLE",
-        "API_KEY": "sk-proj-FAKEKEY12345678901234567890"
+        "API_KEY": "sk-proj-FAKEKEY12345678901234567890",
+        "GITHUB_TOKEN": "ghp_FAKEGITHUBTOKEN1234567890123456",
+        "SLACK_TOKEN": "xoxb-FAKE-SLACK-TOKEN-0000000000",
+        "JWT": "eyJFAKE.eyJQQVlMT0FE.FAKESIGNATURE",
+        "GOOGLE_API_KEY": "AIzaFAKEGOOGLEAPIKEY000000000000000"
     }
     return mapping.get(entity_type, "[REDACTED]")
 
@@ -74,7 +99,7 @@ def analyze_and_sanitize(text, mode="Token Vault (Reversible)"):
     and returns detected metadata, sanitized text, and vault mapping.
     """
     if not text.strip():
-        return text, [], "LOW", {}, []
+        return text, [], "LOW", {}
 
     doc = nlp(text)
     detected_entities = []
@@ -94,6 +119,10 @@ def analyze_and_sanitize(text, mode="Token Vault (Reversible)"):
     # 2. Detect Regex Entities
     for ent_type, pattern in REGEX_PATTERNS.items():
         for match in re.finditer(pattern, text):
+            if ent_type == "CREDIT_CARD":
+                digits = re.sub(r'[-\s]', '', match.group())
+                if not _passes_luhn(digits):
+                    continue
             if not any(e["start"] <= match.start() < e["end"] for e in detected_entities):
                 detected_entities.append({
                     "start": match.start(),
@@ -128,7 +157,10 @@ def analyze_and_sanitize(text, mode="Token Vault (Reversible)"):
         sanitized_text = sanitized_text[:ent["start"]] + replacement + sanitized_text[ent["end"]:]
 
     total_count = len(detected_entities)
-    critical_types = {"CREDIT_CARD", "PAN_CARD", "AADHAAR", "SSN", "AWS_KEY", "API_KEY"}
+    critical_types = {
+        "CREDIT_CARD", "PAN_CARD", "AADHAAR", "SSN", "AWS_KEY", "API_KEY",
+        "GITHUB_TOKEN", "SLACK_TOKEN", "JWT", "GOOGLE_API_KEY"
+    }
     has_critical = any(e["type"] in critical_types for e in detected_entities)
 
     if total_count == 0:
@@ -148,3 +180,28 @@ def rehydrate_text(sanitized_text, vault):
     for token, original in vault.items():
         restored = restored.replace(token, original)
     return restored
+
+def optimize_prompt(sanitized_text: str, tone: str = "Professional & Concise", persona: str = "Enterprise Support Specialist") -> str:
+    """
+    Transforms a sanitized input prompt into a structured, high-performing LLM prompt.
+    Ensures zero PII leakage by operating strictly on sanitized text and adding instructions
+    for the target LLM to preserve token placeholders (e.g. {{PERSON_1}}).
+    """
+    if not sanitized_text.strip():
+        return ""
+
+    template = f"""### SYSTEM INSTRUCTION
+You are an expert {persona}. Execute the following request under strict enterprise data privacy constraints.
+
+### DIRECTIVES & CONSTRAINTS
+1. Tone & Style: Maintain a {tone.lower()} tone in your response.
+2. Token Preservation: DO NOT alter, remove, or replace any placeholder tokens formatted like {{ENTITY_TYPE_N}} (e.g., {{PERSON_1}}, {{EMAIL_1}}, {{CREDIT_CARD_1}}). Retain them exactly as provided in your output response.
+3. Factuality & Conciseness: Address the requirements directly without hallucinating additional details or adding unnecessary fluff.
+
+### INGRESS PAYLOAD (SANITIZED)
+{sanitized_text.strip()}
+
+### EXPECTED OUTPUT FORMAT
+Provide a complete, well-structured output adhering to all directives and preserving all placeholder tokens."""
+
+    return template

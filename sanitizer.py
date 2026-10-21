@@ -2,14 +2,11 @@ import re
 import spacy
 from faker import Faker
 
-# Load spaCy NLP model with automated fallback
+# Load spaCy NLP model with safe fallback
 try:
     nlp = spacy.load("en_core_web_sm")
 except Exception:
-    import spacy.cli
-    spacy.cli.download("en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
-
+    nlp = spacy.blank("en")
 fake = Faker()
 
 # Extended High-Precision Regex Patterns
